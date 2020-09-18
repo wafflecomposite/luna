@@ -1,0 +1,39 @@
+script_name = "buildx"
+host = get_shell.host_computer
+
+error = function(text);print(script_name + ": <color=red>" + text);end function
+warn = function(text);print(script_name + ": <color=yellow>" + text);end function
+success = function(text);print(script_name + ": <color=green>" + text);end function
+			
+get_folder = function(start_from, folder_path, create=0)
+current_folder = start_from
+target_folder_list = folder_path.split("/")
+for target_folder in target_folder_list
+	folder_found = 0
+	if target_folder == null or target_folder == "" then continue
+	for folder in current_folder.get_folders
+		if folder.name == target_folder then 
+			current_folder = folder
+			folder_found = 1
+		end if
+	end for
+	if folder_found == 0 then
+		if create == 0 then
+			error("Can't find folder '" + target_folder + "' in path '" + current_folder.path + "'")
+			return null
+		else
+			cf = host.create_folder(current_folder.path, target_folder)
+			if cf != 1 then
+				error("Unable to create folder '" + target_folder + "' in path '" + current_folder.path + "'")
+				return null
+			else
+				current_folder = get_folder(current_folder, target_folder)
+			end if
+		end if
+	end if
+end for
+return current_folder
+end function
+
+root_dir = host.File("/")
+luna_dir = get_folder(root_dir, "luna", 1)
