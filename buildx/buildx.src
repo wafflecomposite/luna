@@ -1,10 +1,14 @@
 script_name = "buildx"
-host = get_shell.host_computer
+script_version = "0"
+shell = get_shell
+host = shell.host_computer
 
 error = function(text);print(script_name + ": <color=red>" + text);end function
 warn = function(text);print(script_name + ": <color=yellow>" + text);end function
 success = function(text);print(script_name + ": <color=green>" + text);end function
-			
+info = function(text);print(script_name + ": " + text);end function
+crash = function(text);exit(script_name + ": <color=red>" + text);end function
+
 get_folder = function(start_from, folder_path, create=0)
 current_folder = start_from
 target_folder_list = folder_path.split("/")
@@ -35,5 +39,48 @@ end for
 return current_folder
 end function
 
+get_file = function(start_from, file_path)
+	current_folder = start_from
+	target_folder_list = file_path.split("/")
+	filename = target_folder_list.pop
+	for target_folder in target_folder_list
+		folder_found = 0
+		if target_folder == null or target_folder == "" then continue
+		for folder in current_folder.get_folders
+			if folder.name == target_folder then 
+				current_folder = folder
+				folder_found = 1
+			end if
+		end for
+		if folder_found == 0 then return null
+	end for
+	for file in current_folder.get_files
+		if file.name == filename then 
+			return file
+		end if
+	end for
+	return null
+end function
+
 root_dir = host.File("/")
+current_dir = host.File(host.current_path)
+
 luna_dir = get_folder(root_dir, "luna", 1)
+luna_lib_dir = get_folder(luna_dir, "lib", 1)
+
+script_path = null
+build_target_path = current_dir.path
+
+if params.len >= 1 then script_path = params[0]
+if params.len == 2 then build_target_path = params[1]
+if params.len < 1 or params.len > 2 then crash("Wrong number of args")
+
+script = get_file(current_dir, script_path)
+if script == null then script = get_file(root_dir, script_path)
+if script == null  then crash("Can't find " + script_path)
+
+info("Script path: " + script.path)
+info("Target path: " + build_target_path)
+info("Building...")
+shell.build(script.path, build_target_path)
+info("Done!")
