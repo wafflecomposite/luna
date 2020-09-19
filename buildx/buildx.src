@@ -6,40 +6,50 @@ host = shell.host_computer
 txt = {}
 txt.newline = char(10)
 
-error = function(text);print(script_name + ": <color=red>" + text);end function
-warn = function(text);print(script_name + ": <color=yellow>" + text);end function
-success = function(text);print(script_name + ": <color=green>" + text);end function
-info = function(text);print(script_name + ": " + text);end function
-crash = function(text);exit(script_name + ": <color=red>" + text);end function
+error = function(text)
+	print(script_name + ": <color=red>" + text)
+end function
+warn = function(text)
+	print(script_name + ": <color=yellow>" + text)
+end function
+success = function(text)
+	print(script_name + ": <color=green>" + text)
+end function
+info = function(text)
+	print(script_name + ": " + text)
+end function
+crash = function(text)
+	exit(script_name + ": <color=red>" + text)
+end function
 
 get_folder = function(start_from, folder_path, create=0)
-current_folder = start_from
-target_folder_list = folder_path.split("/")
-for target_folder in target_folder_list
-	folder_found = 0
-	if target_folder == null or target_folder == "" then continue
-	for folder in current_folder.get_folders
-		if folder.name == target_folder then 
-			current_folder = folder
-			folder_found = 1
-		end if
-	end for
-	if folder_found == 0 then
-		if create == 0 then
-			error("Can't find folder '" + target_folder + "' in path '" + current_folder.path + "'")
-			return null
-		else
-			cf = host.create_folder(current_folder.path, target_folder)
-			if cf != 1 then
-				error("Unable to create folder '" + target_folder + "' in path '" + current_folder.path + "'")
+	current_folder = start_from
+	target_folder_list = folder_path.split("/")
+	for target_folder in target_folder_list
+		folder_found = 0
+		if target_folder == null or target_folder == "" then continue
+		for folder in current_folder.get_folders
+			if folder.name == target_folder then 
+				current_folder = folder
+				folder_found = 1
+			end if
+		end for
+		if folder_found == 0 then
+			if create == 0 then
+				error("Can't find folder '" + target_folder + "' in path '" + current_folder.path + "'")
 				return null
 			else
-				current_folder = get_folder(current_folder, target_folder)
+				cf = host.create_folder(current_folder.path, target_folder)
+				if cf != 1 then
+					error("Unable to create folder '" + target_folder + "' in path '" + current_folder.path + "'")
+					return null
+				else
+					current_folder = get_folder(current_folder, target_folder)
+				end if
 			end if
 		end if
-	end if
-end for
-return current_folder
+	end for
+	return current_folder
 end function
 
 get_file = function(start_from, file_path, create=0)
@@ -65,7 +75,7 @@ get_file = function(start_from, file_path, create=0)
 			end if
 		end for
 		if create == 1 then host.touch(current_folder.path, filename) else break
-		gf_runs = gr_runs + 1
+		gf_runs = gf_runs + 1
 	end while
 	return null
 end function
@@ -88,7 +98,67 @@ script = get_file(current_dir, script_path)
 if script == null then script = get_file(root_dir, script_path)
 if script == null then crash("Can't find " + script_path)
 
-precompile = function(script)
+precompiler = {}
+precompiler.per_char_flow = function(script_text)
+	q = char(34) //"
+	s = char(59) //;
+	b = char(92) //\
+	d = "/"
+	cleaned_nocomments = ""
+	cleaned = ""
+	cur_str = 0
+	cur_comment = 0
+	for chr in script_text.values
+		if chr == q then 
+			if cur_str == 0 and cur_comment <= 1 then cur_str = 1 else cur_str = 0
+			if cur_comment == 1 then
+				cur_comment = 0
+				cleaned_nocomments = cleaned_nocomments + d + chr
+			else if cur_comment == 0 then
+				cleaned_nocomments = cleaned_nocomments + chr
+			end if
+		else if chr == d then 
+			cur_comment = cur_comment + 1
+		else
+			if cur_comment == 1 then
+				cur_comment = 0
+				cleaned_nocomments = cleaned_nocomments + d + chr
+			else if cur_comment >= 2 then
+				if chr == txt.newline then 
+					cur_comment = 0
+					cleaned_nocomments = cleaned_nocomments + chr
+				end if
+			else
+				cleaned_nocomments = cleaned_nocomments + chr
+			end if
+		end if
+	end for
+	//there is a glitch. Remove comments first.
+	for chr in cleaned_nocomments.values
+		if chr == q then 
+			if cur_str == 0 then cur_str = 1 else cur_str = 0
+			cleaned = cleaned + chr
+		else if chr == s and cur_str == 0 then
+			cleaned = cleaned + txt.newline
+		else if chr == b and cur_str == 0 then
+			cleaned = cleaned + txt.newline
+		else
+			cleaned = cleaned + chr
+		end if
+	end for
+	return cleaned
+end function
+precompiler.per_string_flow = function(script_text)
+	cleaned = ""
+	for line in script_text.split(txt.newline)
+		clean_line = line.trim
+		if clean_line != "" then 
+			if cleaned == "" then cleaned = clean_line else cleaned = cleaned + txt.newline + clean_line
+		end if
+	end for
+	return cleaned
+end function
+precompiler.run = function(script)
 	script_filename = script.path.split("/").pop
 	script_hashname = script_filename + ".md5"
 	script_pcname = script_filename + ".pc"
@@ -96,18 +166,16 @@ precompile = function(script)
 	script_pc = get_file(precompile_dir, script_pcname, 1)
 	if script_hash.content != md5(script.content) then
 		info(script_filename + " - changed. Precompiling...")
-		precompiled = ""
-		for line in script.content.split(txt.newline)
-			precompiled = precompiled + txt.newline + line
-		end for
+		precompiled = self.per_char_flow(script.content)
+		precompiled = self.per_string_flow(precompiled)
 		script_pc.set_content(precompiled)
 		script_hash.set_content(md5(script.content))
 	else
-		info(script_filename + " not changed.")
+		info(script_filename + " - not changed.")
 	end if
 end function
 
-precompile(script)
+precompiler.run(script)
 
 info("Script path: " + script.path)
 info("Target path: " + build_target_path)
@@ -119,3 +187,5 @@ else
 	error("Build failed: " + build_result)
 end if
 print(program_path)
+print("\".code)
+
