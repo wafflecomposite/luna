@@ -3,6 +3,9 @@ script_version = "0"
 shell = get_shell
 host = shell.host_computer
 
+txt = {}
+txt.newline = char(10)
+
 error = function(text);print(script_name + ": <color=red>" + text);end function
 warn = function(text);print(script_name + ": <color=yellow>" + text);end function
 success = function(text);print(script_name + ": <color=green>" + text);end function
@@ -39,7 +42,7 @@ end for
 return current_folder
 end function
 
-get_file = function(start_from, file_path)
+get_file = function(start_from, file_path, create=0)
 	current_folder = start_from
 	target_folder_list = file_path.split("/")
 	filename = target_folder_list.pop
@@ -54,11 +57,16 @@ get_file = function(start_from, file_path)
 		end for
 		if folder_found == 0 then return null
 	end for
-	for file in current_folder.get_files
-		if file.name == filename then 
-			return file
-		end if
-	end for
+	gf_runs = 0
+	while gf_runs != 2
+		for file in current_folder.get_files
+			if file.name == filename then 
+				return file
+			end if
+		end for
+		if create == 1 then host.touch(current_folder.path, filename) else break
+		gf_runs = gr_runs + 1
+	end while
 	return null
 end function
 
@@ -67,6 +75,7 @@ current_dir = host.File(host.current_path)
 
 luna_dir = get_folder(root_dir, "luna", 1)
 luna_lib_dir = get_folder(luna_dir, "lib", 1)
+precompile_dir = get_folder(current_dir, "precompiled", 1)
 
 script_path = null
 build_target_path = current_dir.path
@@ -77,10 +86,36 @@ if params.len < 1 or params.len > 2 then crash("Wrong number of args")
 
 script = get_file(current_dir, script_path)
 if script == null then script = get_file(root_dir, script_path)
-if script == null  then crash("Can't find " + script_path)
+if script == null then crash("Can't find " + script_path)
+
+precompile = function(script)
+	script_filename = script.path.split("/").pop
+	script_hashname = script_filename + ".md5"
+	script_pcname = script_filename + ".pc"
+	script_hash = get_file(precompile_dir, script_hashname, 1)
+	script_pc = get_file(precompile_dir, script_pcname, 1)
+	if script_hash.content != md5(script.content) then
+		info(script_filename + " - changed. Precompiling...")
+		precompiled = ""
+		for line in script.content.split(txt.newline)
+			precompiled = precompiled + txt.newline + line
+		end for
+		script_pc.set_content(precompiled)
+		script_hash.set_content(md5(script.content))
+	else
+		info(script_filename + " not changed.")
+	end if
+end function
+
+precompile(script)
 
 info("Script path: " + script.path)
 info("Target path: " + build_target_path)
 info("Building...")
-shell.build(script.path, build_target_path)
-info("Done!")
+build_result = shell.build(script.path, build_target_path)
+if build_result == "" then
+	info("Done!")
+else
+	error("Build failed: " + build_result)
+end if
+print(program_path)
