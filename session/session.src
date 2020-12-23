@@ -1,0 +1,210 @@
+this_computer = get_shell.host_computer
+cur_path = this_computer.current_path
+lib_folder = get_shell.host_computer.File("/lib")
+newline = char(10)
+session_folder = null
+cache_folder = null
+target_password = "PWNEDbySESSION"
+
+import_lib = function(libname)
+ lib = include_lib("/lib/"+libname)
+ if not lib then lib = include_lib(cur_path + "/" + libname)
+ if not lib then exit("Error: Can't find " + libname + "library.")
+ return lib
+end function
+
+//initialise session folder
+setup_context_folder = function(path, folder_name)
+ if this_computer.File(path + "/" + folder_name) == null then this_computer.create_folder(path, folder_name)
+ for folder in this_computer.File(path).get_folders
+  if folder.name == folder_name then
+   return folder
+  end if
+ end for
+end function
+session_folder = setup_context_folder(cur_path, "session")
+cache_folder = setup_context_folder(session_folder.path, "cache")
+
+meta = import_lib("metaxploit.so")
+crypto = import_lib("crypto.so")
+
+get_remote_ports = function (ipAddress)
+ isLanIp = is_lan_ip( ipAddress )
+ if isLanIp then router = get_router else router = get_router( ipAddress )
+ if router == null then exit("nmap: ip address not found") 
+ ports = null
+ open_ports = [0]
+ if not isLanIp then ports = router.used_ports else ports = router.device_ports(ipAddress)
+ if ports == null then exit("nmap: ip address not found")
+ if typeof(ports) == "string" then exit("nmap: address unreachable")
+ for port in ports
+  if(port.is_closed and not isLanIp) then
+  else
+   open_ports.push(port.port_number)
+  end if
+ end for
+ return open_ports
+end function
+
+Vuln = {}
+Vuln.value = ""
+Vuln.address = ""
+Vuln.requirements = []
+
+vuln_parse = function(mem_addr, scan_res)
+ vuln_list = []
+ res_splitted = scan_res.split(newline)
+ vuln = null
+ for str in res_splitted
+  if str.indexOf("Unsafe check:") != null then
+    vuln = new Vuln
+    vuln.value = slice(str, str.indexOf("<b>")+3, str.indexOf("</b>"))
+    vuln.address = mem_addr
+    vuln_list.push(vuln)
+    //TODO: parse requirements
+  end if
+ end for
+ return vuln_list
+end function
+
+get_cached_vuln = function(libname)
+ vuln_list = []
+  cached_files = cache_folder.get_files
+  if cached_files then
+   for file in cache_folder.get_files
+     if file.name == libname then
+      cache_splitted = file.content.split(newline)
+      for line in cache_splitted
+       vuln_split = line.split(";")
+       if vuln_split.len > 1 then
+        vuln = new Vuln
+        vuln.value = vuln_split[1]
+        vuln.address = vuln_split[0]
+        vuln_list.push(vuln)
+       end if
+      end for
+    end if
+   end for
+  if vuln_list != [] then return vuln_list else return null
+ end if
+ print("Cache disabled, skipped.")
+ return null
+end function
+
+cache_vuln = function(lib_fullname, vuln_list)
+  this_computer.touch(cache_folder.path, lib_fullname)
+  vuln_string = ""
+  for vuln in vuln_list
+    vuln_string = vuln_string + vuln.address + ";" + vuln.value + newline
+  end for
+  for file in cache_folder.get_files
+    if file.name == lib_fullname then
+     file.set_content(vuln_string)
+     return 1
+    end if
+  end for
+ return 0
+end function
+
+get_lib_vuln = function(netlib)
+ lib_fullname = lib.lib_name + "." + lib.version
+ print("Getting vulnerabilities for " + lib_fullname)
+ cached = get_cached_vuln(lib_fullname)
+ if cached then 
+  print("Found in cache.")
+  return cached
+ end if
+ print("Can't find in cache. Scanning...")
+ vuln_list = []
+ mems = meta.scan(netlib)
+ for mem_addr in mems
+  mem_res = meta.scan_address(netlib, mem_addr)
+  parsed_vulns = vuln_parse(mem_addr, mem_res)
+  for vuln in parsed_vulns
+   vuln_list.push(vuln)
+   //payload_res = netlib.overflow(mem_addr, vuln.value, "wubwub")
+  end for
+ end for
+  cache_success = cache_vuln(lib_fullname, vuln_list)
+  if cache_success then print("Vulnerabilities cached.") else print("Unable to cache vulnerabilities.")
+ return vuln_list
+end function
+
+execute_vulns = function(vuln_list)
+ vulns = {}
+ for vuln in vuln_list
+  payload = lib.overflow(vuln.address, vuln.value, target_password)
+  pl_type = typeof(payload)
+  if vulns.hasIndex(pl_type) == 0 then
+    if pl_type == "null" or pl_type == "number" then vulns[pl_type] = 1 else vulns[pl_type] = []
+  end if
+  if pl_type == "null" or pl_type == "number" then vulns[pl_type] = vulns[pl_type] + 1 else vulns[pl_type].push(payload)
+ end for
+ return vulns
+end function
+
+collect_local_execs = function()
+ exec_map = {}
+ for file in lib_folder.get_files
+  lib = meta.load(file.path)
+  vuln_list = get_lib_vuln(lib)
+  cur_exec_map = execute_vulns(vuln_list)
+  for key in cur_exec_map.indexes
+   if exec_map.hasIndex(key) == 0 then
+    exec_map[key] = cur_exec_map[key]
+   else
+    exec_map[key] = exec_map[key] + cur_exec_map[key]
+   end if
+  end for
+ end for    
+ return exec_map
+end function
+
+collect_remote_execs = function(ip)
+ ports = get_remote_ports(ip)
+ 
+    exec_map = {}
+    for port in ports
+        netuse = meta.net_use(ip, port)
+        lib = netuse.dump_lib
+        vuln_list = get_lib_vuln(lib)
+        cur_exec_map = execute_vulns(vuln_list)
+        for key in cur_exec_map.indexes
+            if exec_map.hasIndex(key) == 0 then
+                exec_map[key] = cur_exec_map[key]
+            else
+                exec_map[key] = exec_map[key] + cur_exec_map[key]
+            end if
+        end for
+    end for 
+    return exec_map
+    end function
+
+print_execs_stats = function(execs)
+ print("Exploit stats:")
+ for key in execs.indexes
+  _key = key
+  if key == "null" then _key = "failed"
+  if key == "number" then _key = "password_changed"
+  _val = 0
+  if typeof(execs[key]) == "list" then _val = execs[key].len else _val = execs[key]
+  print("  " + _key + ": " + _val)
+ end for
+end function
+
+//local_execs = collect_local_execs()
+//print_execs_stats(local_execs)
+
+remote_execs = collect_remote_execs("1.0.0.123")
+print_execs_stats(remote_execs)
+
+for exec in remote_execs["shell"]
+ print(exec.host_computer.lan_ip)
+ homes = exec.host_computer.File("/home")
+ for fold in homes.get_folders
+  print(fold.name)
+ end for
+end for
+    
+
+
