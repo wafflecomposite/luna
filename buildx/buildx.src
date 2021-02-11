@@ -22,6 +22,8 @@ crash = function(text)
 	exit(script_name + ": <color=red>" + text)
 end function
 
+print("Using " + script_name + "." + script_version + " (" + program_path + ")")
+
 get_folder = function(start_from, folder_path, create=0)
 	current_folder = start_from
 	target_folder_list = folder_path.split("/")
@@ -170,6 +172,7 @@ precompiler.run = function(script)
 		precompiled = self.per_string_flow(precompiled)
 		script_pc.set_content(precompiled)
 		script_hash.set_content(md5(script.content))
+		info("Precompiler size reduction: " + script.size + " -> " + precompiled.len)
 	else
 		info(script_filename + " - not changed.")
 	end if
@@ -186,6 +189,6 @@ if build_result == "" then
 else
 	error("Build failed: " + build_result)
 end if
-print(program_path)
-print("\".code)
+
+
 
