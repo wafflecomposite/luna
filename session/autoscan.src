@@ -1,0 +1,195 @@
+meta = include_lib("/lib/metaxploit.so")
+if not meta then
+    currentPath = get_shell.host_computer.current_path
+    meta = include_lib(currentPath + "/metaxploit.so")
+end if
+if not meta then exit("Error: Can't find metaxploit library.")
+
+
+if params.len == 0 then
+    print("Usage:")
+    print("autoscan local - to try privelege escalation locally")
+    print("autoscan [IP] - to find open ports")
+    print("autoscan [IP] [PORT] - to hack into port")
+end if
+
+
+mem_res_parse = function(memres)
+    pl_found = false
+    payload_list = []
+    str_splitted = memres.split(" ")
+    str_splitted.reverse
+    
+    for word in str_splitted
+        if pl_found == true then
+            word = word.remove(".")
+            word = word.remove("<b>")
+            word = word.remove("</b>")
+            payload_list.push(word)
+            pl_found = false
+        end if
+        
+        if pl_found == false then
+            if word == "Buffer" then
+                pl_found = true
+            end if
+        end if
+        
+    end for
+    return payload_list
+end function
+
+
+start_lib_scan = function(netlib)
+    mem = meta.scan(netlib)
+    print(mem)
+    for mem_addr in mem
+        mem_res = meta.scan_address(netlib, mem_addr)
+        //print(mem_res)
+        for payload in mem_res_parse(mem_res)
+            print("= = = = = = = = =")
+            print("MEMADDR: " + mem_addr + "; PAYLOAD: " + payload)
+            payload_res = netlib.overflow(mem_addr, payload, "wubwub")
+            if payload_res then
+                exp_type = typeof(payload_res)
+                print("TYPE OF EXPLOIT: " + exp_type)
+                if exp_type == "file" then
+                    print("FILE: " + payload_res.name)
+                end if
+                if exp_type == "shell" then
+                    conf = user_input("open Shell? (y/n)")
+                    if conf == "y" then payload_res.start_terminal
+                end if
+            end if
+        end for
+    end for
+    end function
+
+force_local_root = function(netlib)
+    mem = meta.scan(netlib)
+    print(mem)
+    for mem_addr in mem
+        mem_res = meta.scan_address(netlib, mem_addr)
+        //print(mem_res)
+        for payload in mem_res_parse(mem_res)
+            print("= = = = = = = = =")
+            print("MEMADDR: " + mem_addr + "; PAYLOAD: " + payload)
+            payload_res = netlib.overflow(mem_addr, payload, "wubwub")
+            if payload_res then
+                exp_type = typeof(payload_res)
+                print("TYPE OF EXPLOIT: " + exp_type)
+                if exp_type == "file" then
+                    print("FILE: " + payload_res.name)
+                    while payload_res.path != "/"
+                        payload_res = payload_res.parent
+                    end while
+                
+                    folders = payload_res.get_folders
+                    for folder in folders
+                        if folder.name == "/etc/" then
+                            for file in folder.get_files
+                                if file.name == "passwd" then
+                                    passwd_content = file.content
+                                    if passwd_content then
+                                        print(passwd_content)
+                                        exit("password hashes found, exiting...")
+                                    end if
+                                end if
+                            end for
+                        end if
+                    end for
+                else if exp_type == "shell" then
+                    if payload_res.host_computer.current_path.indexOf("root") then
+                        payload_res.start_terminal
+                    end if
+                else if exp_type == "computer" then 
+                    passwd_content = payload_res.File("/etc/passwd").content
+                    if passwd_content then 
+                        print(passwd_content)
+                        exit("password hashes found, exiting...")
+                    end if
+                end if
+            end if
+        end for
+    end for
+    end function
+
+
+ip = params[0]
+if ip == "local" then
+    print("Privelege escalation attempt started.")
+    lib_folder = get_shell.host_computer.File("/lib")
+    for file in lib_folder.get_files
+        print(file.name)
+        libb = meta.load(file.path)
+        start_lib_scan(libb)
+    end for
+    exit("Privelege escalation attempt ended.")
+end if
+if ip == "localroot" then
+    print("Privelege escalation attempt started.")
+    lib_folder = get_shell.host_computer.File("/lib")
+    for file in lib_folder.get_files
+        print(file.name)
+        libb = meta.load(file.path)
+        force_local_root(libb)
+    end for
+    exit("Privelege escalation attempt ended.")
+    end if
+if not is_valid_ip(ip) then exit("ERROR: IP not valid.")
+
+
+if params.len == 1 then
+    ipAddress = ip
+    isLanIp = is_lan_ip( ipAddress )
+    print("Initialising built-in nmap...")
+    if isLanIp then
+        router = get_router;
+    else 
+        router = get_router( ipAddress )
+    end if
+    
+    if router == null then exit("nmap: ip address not found")
+    ports = null
+    
+    if not isLanIp then
+        ports = router.used_ports
+    else
+        ports = router.device_ports(ipAddress)
+    end if
+    
+    if ports == null then exit("nmap: ip address not found")
+    if typeof(ports) == "string" then exit("nmap: address unreachable")
+    
+    info = "PORT STATE SERVICE VERSION LAN"   
+
+    for port in ports
+        service_info = router.port_info(port)
+        lan_ips = port.get_lan_ip
+        port_status = "open"
+        
+        if(port.is_closed and not isLanIp) then
+            port_status = "closed"
+        end if
+    
+        info = info + "\n" + port.port_number + " " + port_status + " " + service_info + " " + lan_ips
+    end for
+    print(format_columns(info) + "\n")
+    print("Don't forget to try port 0 if it's a router!")
+    exit("Choose port to scan and use it as second argument.")
+end if
+
+port = params[1].to_int
+
+netuse = meta.net_use(ip, port)
+if not netuse then exit("ERROR: No connection.")
+netlib = netuse.dump_lib
+print("LIB: " + netlib.lib_name + "/" + netlib.version)
+
+start_lib_scan(netlib)
+
+
+
+
+
+
